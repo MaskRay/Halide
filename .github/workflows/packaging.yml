@@ -34,9 +34,9 @@ jobs:
     needs: package-ubuntu
     runs-on: ubuntu-20.04
     steps:
+      # Specifically use the CMake version that comes with Ubuntu.
       - name: Install dependencies
-        # Specifically use the CMake version that comes with Ubuntu.
-        run: sudo apt install cmake ninja-build
+        run: sudo apt install cmake ninja-build g++-mingw-w64-x86-64 wine64
       - name: Check out sources
         uses: actions/checkout@v2
       - name: Download Halide Ubuntu packages
