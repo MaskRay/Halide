@@ -373,9 +373,9 @@ BoundsMap Conv2DOp::map_bounds(int input_idx, int output_idx) const {
             .constant(0, vector_reduction)
             .constant(1, vector_tile)
             .constant(2, align_up(ceil_div(filter()->extent(0), vector_reduction), channel_alignment))
-            .upsample(3, 0, vector_tile)
-            .constant(4, filter()->bounds(1))
-            .constant(5, filter()->bounds(2));
+            .constant(3, filter()->bounds(1))
+            .constant(4, filter()->bounds(2))
+            .upsample(5, 0, vector_tile);
     } else {
         assert(input_idx == 2);
         return BoundsMap(1, 4).elementwise(0, 0);
@@ -409,8 +409,8 @@ void Conv2DOp::execute(const Box &crop) {
         const auto output_range = get_output_range(activation_, out->quantization());
 
         assert(filter_buf.dimensions() == 6);
-        const int filter_width = filter_buf.dim(4).extent();
-        const int filter_height = filter_buf.dim(5).extent();
+        const int filter_width = filter_buf.dim(3).extent();
+        const int filter_height = filter_buf.dim(4).extent();
         if (filter_width == 1 && filter_height == 1) {
             // For 1x1 filters, we can fuse x and y, which can help avoid overhead for
             // small output sizes.

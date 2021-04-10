@@ -42,7 +42,7 @@ public:
     // Unsigned 8-bit input tensor, indexed by c, x, y, b.
     Input<Buffer<uint8_t>> input_{"input", 4};
 
-    // A 6D array of filter coefficients indexed by ci % n, co % k, ci / n, co / k, x, y,
+    // A 6D array of filter coefficients indexed by ci % n, co % k, ci / n, x, y, co / k,
     // where n = vector_reduction and k = accum_vector_size (below).
     Input<Buffer<>> filter_{"filter", 6};
 
@@ -95,13 +95,13 @@ public:
 
         // Set up the reduction loop and inputs.
         Expr filter_depth = filter_.dim(0).extent() * filter_.dim(2).extent();
-        Expr filter_width = filter_.dim(4).extent();
-        Expr filter_height = filter_.dim(5).extent();
+        Expr filter_width = filter_.dim(3).extent();
+        Expr filter_height = filter_.dim(4).extent();
         // Align the filter depth, which requires padding the input.
         filter_depth = align_up(filter_depth, unroll_reduction);
         RDom r(0, filter_width, 0, filter_height, 0, filter_depth);
         Expr filter_rdxyc =
-            filter_(r.z % vector_reduction, c % accum_vector_size, r.z / vector_reduction, c / accum_vector_size, r.x, r.y);
+            filter_(r.z % vector_reduction, c % accum_vector_size, r.z / vector_reduction, r.x, r.y, c / accum_vector_size);
         Expr input_rdxyc =
             input(r.z, x * stride_x_ + r.x * dilation_x_, y * stride_y_ + r.y * dilation_y_, b);
 
@@ -188,7 +188,7 @@ public:
                 .specialize(output_channels % (tile_c * accum_vector_size) == 0 && output_width >= tile_x)
                 .split(c, co, c, tile_c * accum_vector_size, TailStrategy::RoundUp)
                 .split(x, xo, x, tile_x, TailStrategy::ShiftInwards)
-                .reorder(x, c, co, xo, y, b)
+                .reorder(x, c, xo, y, co, b)
                 .vectorize(c)
                 .unroll(x);
         }
@@ -198,12 +198,12 @@ public:
         output_
             .split(c, co, c, accum_vector_size, TailStrategy::Predicate)
             .split(x, xo, x, 1)
-            .reorder(c, x, co, xo, y, b)
+            .reorder(c, x, xo, y, co, b)
             .vectorize(c);
 
         // These GuardWithIf splits simplify for the constant-tile specializations,
         // but probably generate poor code for the general case.
-        convolved.compute_at(output_, co)
+        convolved.compute_at(output_, xo)
             .store_in(MemoryType::Stack)
             .reorder(x, c)
             .vectorize(c, accum_vector_size, TailStrategy::RoundUp)
@@ -232,8 +232,8 @@ public:
             // a lot.
             // TODO: Maybe we should do this in a separate op. We already pad it
             // separately, we just don't dequantize it to 16-bit.
-            input.compute_at(output_, y)
-                .reorder(c, x);
+            input.compute_at(output_, b)
+                .reorder(c, x, y);
 
             input.specialize(is_interleaved(input_, 4))
                 .vectorize(c, 4, TailStrategy::RoundUp)
@@ -266,22 +266,23 @@ public:
                 .atomic()
                 .vectorize(rci, vector_reduction)
                 .unroll(rci)
-                .vectorize(c, accum_vector_size, TailStrategy::RoundUp);
+                .vectorize(c, accum_vector_size, TailStrategy::GuardWithIf);
             offset_c.update(1)
-                .vectorize(c, accum_vector_size, TailStrategy::RoundUp);
+                .vectorize(c, accum_vector_size, TailStrategy::GuardWithIf);
 
             // Compute the sum of the input outside the loops over channels.
-            sum_input.compute_at(output_, xo)
-                .vectorize(x)
+            sum_input.in().compute_at(output_, b)
+                .vectorize(x, accum_vector_size, TailStrategy::GuardWithIf);
+            sum_input.compute_at(sum_input.in(), x)
                 .update()
-                .reorder(r.z, r.x, r.y, x)
+                .reorder(r.z, r.x, r.y, x, y)
                 .atomic()
                 .vectorize(r.z, unroll_reduction)
-                .vectorize(x);
+                .vectorize(x, accum_vector_size, TailStrategy::GuardWithIf);
         }
 
         // TODO: Pad this outside and let it constant fold.
-        bias_.in().compute_root().store_in(MemoryType::Stack);
+        bias_.in(convolved).compute_at(output_, co).store_in(MemoryType::Stack);
 
         // TODO: It looks like our loads aren't getting aligned, despite all of these
         // requirements.
@@ -313,7 +314,7 @@ public:
     Input<uint8_t> input_zero_{"input_zero"};
     Input<uint8_t> output_zero_{"output_zero"};
 
-    // 6D array of filter coefficients indexed by ci % n, co % k, ci / n, co / k, x, y,
+    // 6D array of filter coefficients indexed by ci % n, co % k, ci / n, x, y, co / k,
     // where n = vector_reduction and k = accum_vector_size (below).
     Output<Buffer<>> output_{"output", 6};
 
@@ -335,7 +336,7 @@ public:
 
         Expr filter_cxyb =
             i16(input_bounded(co * vector_reduction + ci, x, y, bo * vector_tile + bi)) - i16(input_zero_);
-        output_(ci, bi, co, bo, x, y) = cast(output_.type(), filter_cxyb + output_zero_);
+        output_(ci, bi, co, x, y, bo) = cast(output_.type(), filter_cxyb + output_zero_);
 
         // Schedule.
         output_.dim(0).set_min(0).set_extent(vector_reduction);
