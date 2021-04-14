@@ -67,7 +67,6 @@ set(Halide_ENABLE_RTTI @Halide_ENABLE_RTTI@)
 include(CMakeFindDependencyMacro)
 
 find_dependency(HalideHelpers "${Halide_VERSION}" EXACT)
-find_dependency(Threads)
 
 if (Halide_comp_PNG)
     Halide_find_component_dependency(PNG PNG)
