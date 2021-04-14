@@ -16,8 +16,17 @@ find_package(HalideHelpers REQUIRED)
 ## Generate library
 ##
 
-add_halide_library(add FROM xc::add_gen TARGETS cmake)
+add_halide_library(add FROM xc::add_gen
+                   TARGETS cmake
+                   REGISTRATION add_reg_cpp)
 add_library(xc::add ALIAS add)
+
+##
+## Helper runner
+##
+
+add_executable(run_add ${add_reg_cpp})
+target_link_libraries(run_add PRIVATE add Halide::RunGenMain)
 
 ##
 ## Installation
